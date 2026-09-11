@@ -71,6 +71,9 @@ tests/            pytest suite
 - `mg_extract.py` — the core log-ratio polynomial fit engine.
 - `protocol.py` — observable construction, analytical V-inversion,
   multi-observable combination.
+- `calibration.py` — simulation-derived calibration curves for `Yg210`/
+  `Ym210`, an alternative to the analytic inversion (drop-in via
+  `tenor_protocol(..., calibration_override=...)`).
 - `benchmark.py` — clean-database caching + noise-sweep benchmark harness.
 - `plotting.py` — violin-plot discrepancy visualization.
 
@@ -95,6 +98,8 @@ generate the numeric reference data this port was validated against.
   resolution, and digital-smearing kernel size, respectively).
 - `reproduce_fig6_noise_violin.py` — the noise-sensitivity violin plot
   (recovered variance/radius-of-gyration discrepancy vs. photon flux).
+- `reproduce_calibration_vs_analytic.py` — the simulated-calibration-vs-
+  analytic inversion comparison for Yg210/Ym210.
 
 ## Validation summary
 
@@ -106,7 +111,14 @@ Octave) and, separately, against a real MATLAB benchmark run:
 - The full analysis pipeline's recovered `Rg` matches MATLAB to ~4e-8, and
   the final combined `V` estimate to ~1e-4, across a 144-case grid spanning
   4 form factors × 8 variances × 3 distributions.
-- 95/95 unit and parity tests pass.
+- A from-scratch rerun of the full noise benchmark (2,520 analyses) matches
+  the manuscript's own reported per-photon-density bias/RMS/valid-fraction
+  numbers to within Monte-Carlo noise at every level.
+- The simulation-derived calibration route for Yg210/Ym210 (see
+  `calibration.py`) independently confirms the manuscript's claimed bias
+  reduction over the analytic inversion, and covers V values the analytic
+  route cannot invert at all.
+- 101/101 unit and parity tests pass.
 
 ## Reproducing the paper's figures
 
@@ -118,6 +130,7 @@ Octave) and, separately, against a real MATLAB benchmark run:
 .venv/bin/python3 scripts/reproduce_fig6_noise_violin.py         # noise-sensitivity violin plot
 .venv/bin/python3 scripts/reproduce_fig7_nradii_sensitivity.py   # sensitivity to ensemble discretization
 .venv/bin/python3 scripts/reproduce_fig8_pxn_sensitivity.py      # sensitivity to smearing-kernel size
+.venv/bin/python3 scripts/reproduce_calibration_vs_analytic.py   # calibration vs. analytic inversion, Yg210/Ym210
 ```
 
 Figures are written to `../tenor-saxs-v2-data/figures/` (outside the repo,
