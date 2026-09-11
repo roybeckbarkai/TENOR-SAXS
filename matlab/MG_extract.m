@@ -1,7 +1,7 @@
-function [g_rat,RG2,Pxn,res,actualPSF]=MG_extract(Pxn,q_mat_x,q_mat_y,I_mat,signum,RG2,use_r3,use_g3,WAVELENGTH)
+function [g_rat,RG2,Pxn,res,actualPSF]=MG_extract(Pxn,q_mat_x,q_mat_y,I_mat,signum,RG2,use_r3,use_g3,WAVELENGTH,QRG_MAX,DEADPIX_FACTOR)
 %% Find the M and G coeffs and R_g for a given intensity map
 %Pxn is the 4 pixel numbers defining the 2 assymetric PSFs
-% [g_rat,RG2,Pxn,res,actualPSF]=MG_extract(Pxn,q_mat_x,q_mat_y,I_mat,signum,RG2,use_r3,use_g3)
+% [g_rat,RG2,Pxn,res,actualPSF]=MG_extract(Pxn,q_mat_x,q_mat_y,I_mat,signum,RG2,use_r3,use_g3,WAVELENGTH,QRG_MAX,DEADPIX_FACTOR)
 % input: meshgrid of q on the detector, x- and y-values in q_mat_x and
 % signum= default 4; % number of stds in the gaussian filter (PSF)
 % q_mat_y (nm-1), respectively, and intensity matrix I_mat
@@ -9,6 +9,10 @@ function [g_rat,RG2,Pxn,res,actualPSF]=MG_extract(Pxn,q_mat_x,q_mat_y,I_mat,sign
 % use_g3 says the fit for G is cubic or quadratic
 % WAVELENGTH (nm) is needed to make the q->angle conversion for a correct
 % filtering of the PSF (independent of location in detector).
+% QRG_MAX (default 0.79) is the upper Guinier edge: the analysis window
+% only includes pixels with q*sqrt(R_g_nofilt) < QRG_MAX.
+% DEADPIX_FACTOR (default 2) is the detector-border margin, in units of
+% max(Pxn) pixels, excluded from the fit on each side.
 
 % result matrix g_rat shows :
 % 1: g1/g0
@@ -27,15 +31,24 @@ function [g_rat,RG2,Pxn,res,actualPSF]=MG_extract(Pxn,q_mat_x,q_mat_y,I_mat,sign
 gridded_filtering=0; % do not assume the qx and qy are meshgrids, smooth according to solid angle PSF
 
 if nargin < 7 || isempty(use_r3)
-    use_r3 = true;
-end
+    use_r3 = false;  % was true; every documented entry point already forces
+end                  % quadratic (init_TENOR_params.m/the Python port), so
+                     % only a direct low-arg-count call hit the cubic default
 
 if nargin < 8 || isempty(use_g3)
-    use_g3 = true;
+    use_g3 = false;  % was true; see use_r3 above
 end
 
 if nargin < 9 || isempty(WAVELENGTH)
     WAVELENGTH = 0.1; %nm
+end
+
+if nargin < 10 || isempty(QRG_MAX)
+    QRG_MAX = 0.79;  % upper Guinier edge, q*Rg_apparent < QRG_MAX
+end
+
+if nargin < 11 || isempty(DEADPIX_FACTOR)
+    DEADPIX_FACTOR = 2;  % border margin in units of max(Pxn) pixels
 end
 
 
@@ -184,14 +197,20 @@ R_g_est=RG2;
 R_g_nofilt=RG2;  %r_g^2*(1+V)
 Pxn=[ pxx pxy opx];
 % deadpix=sum(Pxn);%max(size(H))*2;
-deadpix=2*max(Pxn);%max(size(H))*2;
+deadpix=DEADPIX_FACTOR*max(Pxn);%max(size(H))*2;  % was hard-coded 2*max(Pxn)
 % disp((max(Pxn)/signum*dqpix*R_g_est)^2*2/3)
 
 
-qrng=([0*deadpix*dqpix min((maxq-deadpix*dqpix),1.4765/sqrt(R_g_nofilt))]); % relevant range to avoid the boundaries when filtering
-qrng=([0*deadpix*dqpix min((maxq-deadpix*dqpix),1.35/sqrt(R_g_nofilt))]); % relevant range to avoid the boundaries when filtering
-qrng=([0*deadpix*dqpix min((maxq-deadpix*dqpix),0.9/sqrt(R_g_nofilt))]); % relevant range to avoid the boundaries when filtering
-qrng=([0*deadpix*dqpix min((maxq-deadpix*dqpix),0.79/sqrt(R_g_nofilt))]); % relevant range to avoid the boundaries when filtering. Lower upper limit is more accurate for real form-factor (with 3rd order phi''')
+% DEAD CODE (kept for provenance only): the three assignments below were
+% overwritten immediately and never took effect. The live window is the
+% single QRG_MAX assignment that follows them.
+% qrng=([0*deadpix*dqpix min((maxq-deadpix*dqpix),1.4765/sqrt(R_g_nofilt))]);
+% qrng=([0*deadpix*dqpix min((maxq-deadpix*dqpix),1.35/sqrt(R_g_nofilt))]);
+% qrng=([0*deadpix*dqpix min((maxq-deadpix*dqpix),0.9/sqrt(R_g_nofilt))]);
+% --- LIVE analysis window -------------------------------------------------
+% Relevant range avoiding the detector boundaries when filtering. A lower
+% upper limit is more accurate for a real form-factor (with 3rd order phi''').
+qrng=([0*deadpix*dqpix min((maxq-deadpix*dqpix),QRG_MAX/sqrt(R_g_nofilt))]);  % was hard-coded 0.79
 
 
 

@@ -46,6 +46,15 @@ import numpy as np
 from scipy.interpolate import PchipInterpolator
 from scipy.stats import norm
 
+from .mg_extract import DEADPIX_FACTOR as _DEADPIX_FACTOR_DEFAULT
+from .mg_extract import QRG_MAX as _QRG_MAX_DEFAULT
+
+# Re-exported so callers can do `protocol.QRG_MAX` / `protocol.DEADPIX_FACTOR`
+# without reaching into mg_extract directly. mg_extract does not import
+# protocol, so this is not circular.
+QRG_MAX = _QRG_MAX_DEFAULT
+DEADPIX_FACTOR = _DEADPIX_FACTOR_DEFAULT
+
 __all__ = [
     "InvertResult",
     "TenorProtocolResult",
@@ -57,6 +66,8 @@ __all__ = [
     "tenor_protocol",
     "OBSERVABLE_NAMES",
     "OBSERVABLE_NAMES_WITH_YT",
+    "QRG_MAX",
+    "DEADPIX_FACTOR",
 ]
 
 # The six MATLAB-backed observables (default set, unchanged from before Y_T
@@ -414,6 +425,46 @@ class TenorProtocolResult:
     mg_result: object
 
 
+def _six_observables_from_mg_result(mg_result, use_g3: bool) -> tuple[dict[str, float], float, float]:
+    """Build the six MATLAB-backed observables from one image's mg_extract fit.
+
+    Shared by :func:`tenor_protocol` (the single-image analysis path) and
+    :func:`simulate_calibration_curve` (which calls this once per simulated
+    ``V`` node) so the observable formulas live in exactly one place.
+    Returns ``(observables, sigma0, delta0)`` -- the caller derives
+    ``ag = sigma0/2`` / ``am = delta0/2`` itself if it needs them (only
+    ``tenor_protocol`` does, for its result dataclass).
+    """
+    sx1, sy1, sx2, sy2 = mg_result.actual_psf
+    # mg_extract fits log(F_wide / F_narrow) (kernel 2 over kernel 1), so the
+    # signed PSF difference is "wide minus narrow" (PSF2 - PSF1).
+    d_sx2 = sx2 ** 2 - sx1 ** 2
+    d_sy2 = sy2 ** 2 - sy1 ** 2
+    sigma0 = 0.5 * (d_sx2 + d_sy2)
+    delta0 = 0.5 * (d_sx2 - d_sy2)
+    ag = 0.5 * sigma0
+
+    p = mg_result.p
+    rg2 = mg_result.rg2
+    g0, g1, g2 = p[0], p[1], p[2]
+    m_offset = 3 + int(use_g3)
+    m1, m2 = p[m_offset], p[m_offset + 1]
+
+    raw_yg100 = g1 / g0 ** 2
+    raw_yg210 = g2 / (g1 * g0)
+    raw_ym210 = m2 / (m1 * g0)
+
+    observed = {
+        "Yg100": ag * raw_yg100,
+        "Yg210": ag * raw_yg210,
+        "Ym210": ag * raw_ym210,
+        "Jg10": (g1 / g0) / rg2,
+        "Jg21": (g2 / g1) / rg2,
+        "Jm": (m2 / m1) / rg2,
+    }
+    return observed, sigma0, delta0
+
+
 def tenor_protocol(
     intensity: np.ndarray,
     qx: np.ndarray,
@@ -431,13 +482,38 @@ def tenor_protocol(
     min_slope: float = 1e-8,
     strategy: str = "inverseVariance",
     observables: tuple[str, ...] = _OBSERVABLE_NAMES,
+    qrg_max: float = _QRG_MAX_DEFAULT,
+    deadpix_factor: float = _DEADPIX_FACTOR_DEFAULT,
+    calibration_override: dict[str, np.ndarray] | None = None,
 ) -> TenorProtocolResult:
     """Run the full TENOR-SAXS extraction protocol on one 2D detector image.
 
     Fits the polynomial coefficients via ``mg_extract.mg_extract``, builds
     the requested physically-named observables and their delta-method SEs,
-    inverts each against the analytical calibration curve to get a
-    per-observable ``V`` estimate, and combines them into one final answer.
+    inverts each against a calibration curve (by default the analytical one,
+    :func:`analytical_theory`) to get a per-observable ``V`` estimate, and
+    combines them into one final answer.
+
+    ``qrg_max``/``deadpix_factor`` are passed straight through to
+    :func:`tenor_saxs.mg_extract.mg_extract` -- see its docstring and the
+    ``QRG_MAX``/``DEADPIX_FACTOR`` module constants for what they mean and
+    how they interact.
+
+    ``calibration_override``:
+        Optional per-observable replacement for the analytic calibration
+        curve, e.g. ``{"Yg210": ..., "Ym210": ...}`` -- only the named
+        observables are overridden; any observable not present still uses
+        ``analytical_theory``. The manuscript recommends this simulation-
+        derived route specifically for ``Yg210``/``Ym210`` (see
+        :func:`tenor_saxs.calibration.build_calibration_curve`), whose
+        analytic formulas are measurably biased and, for ``Yg210``, non-
+        invertible past ``V=0.273``. Each array MUST be evaluated on
+        exactly this call's own ``v_grid`` (``np.linspace(*v_range,
+        v_grid_n)``) -- :func:`tenor_saxs.calibration.build_calibration_curve`'s
+        ``v_grid_range``/``v_grid_n`` default to this function's own
+        ``v_range``/``v_grid_n`` defaults for exactly this reason. Default
+        ``None`` leaves every observable on the analytic curve, i.e.
+        today's exact behavior.
     """
     from tenor_saxs import mg_extract as mg_extract_module
 
@@ -453,36 +529,15 @@ def tenor_protocol(
         weight_mode=weight_mode,
         wavelength=wavelength,
         use_single=use_single,
+        qrg_max=qrg_max,
+        deadpix_factor=deadpix_factor,
     )
 
-    sx1, sy1, sx2, sy2 = mg_result.actual_psf
-    # mg_extract fits log(F_wide / F_narrow) (kernel 2 over kernel 1), so the
-    # signed PSF difference is "wide minus narrow" (PSF2 - PSF1).
-    d_sx2 = sx2 ** 2 - sx1 ** 2
-    d_sy2 = sy2 ** 2 - sy1 ** 2
-    sigma0 = 0.5 * (d_sx2 + d_sy2)
-    delta0 = 0.5 * (d_sx2 - d_sy2)
+    all_observed, sigma0, delta0 = _six_observables_from_mg_result(mg_result, use_g3)
     ag = 0.5 * sigma0
     am = 0.5 * delta0
-
     p = mg_result.p
     rg2 = mg_result.rg2
-    g0, g1, g2 = p[0], p[1], p[2]
-    m_offset = 3 + int(use_g3)
-    m1, m2 = p[m_offset], p[m_offset + 1]
-
-    raw_yg100 = g1 / g0 ** 2
-    raw_yg210 = g2 / (g1 * g0)
-    raw_ym210 = m2 / (m1 * g0)
-
-    all_observed = {
-        "Yg100": ag * raw_yg100,
-        "Yg210": ag * raw_yg210,
-        "Ym210": ag * raw_ym210,
-        "Jg10": (g1 / g0) / rg2,
-        "Jg21": (g2 / g1) / rg2,
-        "Jm": (m2 / m1) / rg2,
-    }
 
     y_t_se: float | None = None
     if "Y_T" in observables:
@@ -521,6 +576,18 @@ def tenor_protocol(
 
     v_grid = np.linspace(v_range[0], v_range[1], v_grid_n)
     calibration = analytical_theory(v_grid, phi2)
+    if calibration_override is not None:
+        for name, values in calibration_override.items():
+            values = np.asarray(values, dtype=float)
+            if values.shape != v_grid.shape:
+                raise ValueError(
+                    f"calibration_override[{name!r}] has shape {values.shape}, expected "
+                    f"{v_grid.shape} to match this call's v_grid (v_range={v_range}, "
+                    f"v_grid_n={v_grid_n}) -- build the override curve with "
+                    "calibration.build_calibration_curve(..., v_grid_range=v_range, "
+                    "v_grid_n=v_grid_n) so the grids align."
+                )
+            calibration[name] = values
 
     v_estimates: dict[str, float] = {}
     v_se: dict[str, float] = {}

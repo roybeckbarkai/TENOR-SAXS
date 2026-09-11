@@ -31,6 +31,12 @@ simulation.signum = 4;  %number of sigmas to take in gaussian kernel
 simulation.use_r3 = 0;  %use 3rd order polynomial for m fit
 simulation.use_g3 = 0;  %use 3rd order polynomial for g fit
 
+% --- TENOR analysis window (see MG_extract.m) ---
+% Round-4 update: the manuscript's final choice is q*R0_tilde < 1.0 and a
+% one-kernel-width border margin; round 1-3 shipped 0.79/2.
+simulation.QRG_MAX = 1.0;        % upper Guinier edge, q*Rg_apparent < QRG_MAX
+simulation.DEADPIX_FACTOR = 1;   % border margin in units of max(Pxn) pixels
+
 % 3. Ensemble Parameters
 ensemble.rg = 5;
 ensemble.p = 0.1;              %

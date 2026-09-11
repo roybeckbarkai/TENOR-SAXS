@@ -78,7 +78,8 @@ for iv = 1:numel(V_grid)
                 c.qx = single(qx); c.qy = single(qy); c.I = single(I);
 
                 [~, RG2, ~, res, actualPSF] = MG_extract(sim.Pxn, qx, qy, I, ...
-                    sim.signum, [], sim.use_r3, sim.use_g3, inst.lambda);
+                    sim.signum, [], sim.use_r3, sim.use_g3, inst.lambda, ...
+                    sim.QRG_MAX, sim.DEADPIX_FACTOR);
                 c.RG2 = RG2; c.actualPSF = actualPSF; c.p = res.p; c.covP = res.covP;
 
                 simTP = sim; simTP.RG2 = [];

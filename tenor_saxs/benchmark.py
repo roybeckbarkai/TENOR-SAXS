@@ -41,6 +41,8 @@ import pandas as pd
 
 from . import psf as psf_module
 from .distributions import target_effective_distribution
+from .mg_extract import DEADPIX_FACTOR as _DEADPIX_FACTOR_DEFAULT
+from .mg_extract import QRG_MAX as _QRG_MAX_DEFAULT
 from .protocol import tenor_protocol
 from .simulation import scatter2d
 
@@ -59,19 +61,40 @@ _RESULTS_PKL_FILENAME = "benchmark_results.pkl"
 
 
 def _default_v_values() -> np.ndarray:
-    # MATLAB: (0.01:.05:.55).^2 -- 11 values.
-    return (0.01 + 0.05 * np.arange(11)) ** 2
+    # [uri2x-15]: linspace(0.01,0.55,12).^2 -- 12 values, 1e-4..0.3025.
+    # (was (0.01:.05:.55).^2, 11 values, before the manuscript's round-4
+    # benchmark rerun.)
+    return np.linspace(0.01, 0.55, 12) ** 2
+
+
+def _dq(sd_dist: float, wavelength: float, det_side: float, det_pix: int) -> float:
+    """Detector q-space pixel pitch (1/nm), shared by :func:`photon_q_density`
+    and :func:`_default_peak_photons` so the two stay consistent by
+    construction rather than via a duplicated/hand-computed literal."""
+    return 4.0 * np.pi / wavelength * det_side / sd_dist / (2.0 * round(det_pix / 2) + 1.0)
 
 
 def _default_peak_photons() -> np.ndarray:
-    # MATLAB: 10.^(2.5:.5:5)/1.65 -- 6 geometrically spaced flux levels.
-    return 10.0 ** np.arange(2.5, 5.01, 0.5) / 1.65
+    # [uri2x-15]: seven half-decade photon Q-densities, N_q2 = 1e6..1e9
+    # photons/nm^-2 (photons per unit q-space area -- see
+    # photon_q_density -- instrument-geometry-only, not an arbitrary
+    # pixel-binning-dependent count), converted to this config's own
+    # default peak-photons-per-pixel via peak_photons = N_q2 * dq**2 at
+    # the default geometry (sd_dist=360, wavelength=0.1, det_side=3.5,
+    # det_pix=500). (Was 6 geometrically-spaced levels via
+    # 10.^(2.5:.5:5)/1.65, corresponding to N_q2 = 3.2e7..1.0e10, before
+    # the manuscript's round-4 benchmark rerun.)
+    dq2 = _dq(360.0, 0.1, 3.5, 500) ** 2
+    n_q2 = np.logspace(6.0, 9.0, 7)
+    return n_q2 * dq2
 
 
 def _default_pxn() -> np.ndarray:
-    # run_TENOR_benchmark.m's own default, [85 75 111 125] -- NOTE this
-    # differs from protocol.tenor_protocol's own default [87,85,125,123].
-    return np.array([85, 75, 111, 125])
+    # [uri2x-15]'s chosen quartet, [91 81 117 127] -- NOTE this differs
+    # from protocol.tenor_protocol's own (unrelated, unchanged) default
+    # [87,85,125,123]. (Was [85 75 111 125] before the manuscript's
+    # round-4 benchmark rerun.)
+    return np.array([91, 81, 117, 127])
 
 
 @dataclass(slots=True)
@@ -126,6 +149,9 @@ class BenchmarkConfig:
     min_slope: float = 1e-8
     strategy: str = "inverseVariance"
     observables: tuple[str, ...] = ("Yg100",)
+    # --- analysis window (see mg_extract.QRG_MAX / mg_extract.DEADPIX_FACTOR) ---
+    qrg_max: float = _QRG_MAX_DEFAULT
+    deadpix_factor: float = _DEADPIX_FACTOR_DEFAULT
 
     def __post_init__(self) -> None:
         if self.psf0 is None:
@@ -485,7 +511,7 @@ def photon_q_density(peak_photons: float, sd_dist: float, wavelength: float, det
     (matching this package's own noise-benchmark default) for consistency
     with the reference violin plot it's being compared against.
     """
-    dq = 4.0 * np.pi / wavelength * det_side / sd_dist / (2.0 * round(det_pix / 2) + 1.0)
+    dq = _dq(sd_dist, wavelength, det_side, det_pix)
     return float(peak_photons) / dq**2
 
 
@@ -535,8 +561,11 @@ def run_noise_benchmark(
     -------
     pd.DataFrame
         Columns: ``CaseID, Replicate, NoiseLevelIndex, PeakPhotons,
-        PhotonQDensity, Seed, True_V, True_Rg, Phi2, BestV, BestV_SE, Rg,
-        RgCorrected, Status, Error``. ``PhotonQDensity`` (see
+        PhotonQDensity, Seed, True_V, True_Rg, True_R0, Phi2, BestV,
+        BestV_SE, Rg, RgCorrected, Status, Error``. ``True_Rg`` is the
+        apparent (Guinier) radius, fixed by construction; ``True_R0`` is the
+        true scattering-weighted mean radius that ``RgCorrected`` estimates.
+        ``PhotonQDensity`` (see
         :func:`photon_q_density`) is the instrument-geometry-only photon
         density in photons/nm^-2, independent of pixel binning -- the
         more physically meaningful noise axis for cross-instrument
@@ -555,6 +584,13 @@ def run_noise_benchmark(
         # this port is the realized/predicted observed Rg from the target
         # search rather than the nominal input config.rg).
         true_rg = float(row.PredictedObservedRg)
+        # RequestedRg is the true SCATTERING-WEIGHTED mean radius the target
+        # search aimed for -- what RgCorrected estimates. True_Rg (above) is
+        # the APPARENT (Guinier) radius, biased upward by polydispersity and
+        # fixed by construction for this case; the two coincide only at
+        # V=0. True_R0 is what the corrected-radius discrepancy (Rg
+        # violin) should be compared against, not True_Rg.
+        true_r0 = float(row.RequestedRg)
         phi2_case = float(row.Phi2)
 
         for j, peak_photons in enumerate(config.peak_photons, start=1):
@@ -574,6 +610,7 @@ def run_noise_benchmark(
                     "Seed": int(seed),
                     "True_V": true_v,
                     "True_Rg": true_rg,
+                    "True_R0": true_r0,
                     "Phi2": phi2_case,
                 }
                 try:
@@ -594,6 +631,8 @@ def run_noise_benchmark(
                         min_slope=config.min_slope,
                         strategy=config.strategy,
                         observables=config.observables,
+                        qrg_max=config.qrg_max,
+                        deadpix_factor=config.deadpix_factor,
                     )
                     record.update(
                         BestV=float(result.best_v),
@@ -623,6 +662,7 @@ def run_noise_benchmark(
         "Seed",
         "True_V",
         "True_Rg",
+        "True_R0",
         "Phi2",
         "BestV",
         "BestV_SE",

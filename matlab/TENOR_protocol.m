@@ -64,6 +64,12 @@ function Results = TENOR_protocol(I_mat,qx,qy,inst,sim,ens)
 %   sim.minSlope
 %       Minimum acceptable absolute analytical slope. Default: 1e-8.
 %
+%   sim.QRG_MAX
+%       Upper Guinier edge, q*Rg_apparent < QRG_MAX. Default: 0.79.
+%
+%   sim.DEADPIX_FACTOR
+%       Detector-border margin, in units of max(Pxn) pixels. Default: 2.
+%
 %   ens.nu, ens.phi2, or ens.phi_double_prime
 %       Monodisperse form-factor curvature phi''.
 %
@@ -92,7 +98,8 @@ check_inputs(I_mat,qx,qy,inst,sim,ens);
 c = configuration(inst,sim,ens);
 
 [~,RG2,Pxn,res,actualPSF] = MG_extract( ...
-    c.Pxn,qx,qy,I_mat,c.signum,c.RG2,c.use_r3,c.use_g3,c.lambda);
+    c.Pxn,qx,qy,I_mat,c.signum,c.RG2,c.use_r3,c.use_g3,c.lambda, ...
+    c.QRG_MAX,c.DEADPIX_FACTOR);
 
 if ~isstruct(res) || ~isfield(res,'p') || ~isfield(res,'covP')
     error('TENOR:FitFailed', ...
@@ -284,6 +291,8 @@ c.observables = get_value(sim,{'observables','useObservables'}, ...
 c.strategy = get_value(sim,{'strategy','choiceStrategy'}, ...
     'inverseVariance');
 c.minSlope = get_value(sim,{'minSlope'},1e-8);
+c.QRG_MAX = get_value(sim,{'QRG_MAX','qrgMax','qRgLimit'},0.79);
+c.DEADPIX_FACTOR = get_value(sim,{'DEADPIX_FACTOR','deadpixFactor'},2);
 c.nu = get_value(ens,{'nu','phi2','phi_double_prime'},NaN);
 
 validateattributes(c.lambda,{'numeric'},{'scalar','finite','positive'});
@@ -293,6 +302,8 @@ if any(mod(c.Pxn,2) ~= 1)
     error('TENOR:Pxn','All Pxn entries must be odd integers.');
 end
 validateattributes(c.signum,{'numeric'},{'scalar','finite','positive'});
+validateattributes(c.QRG_MAX,{'numeric'},{'scalar','finite','positive'});
+validateattributes(c.DEADPIX_FACTOR,{'numeric'},{'scalar','finite','nonnegative'});
 if ~isempty(c.RG2)
     validateattributes(c.RG2,{'numeric'},{'scalar','finite','positive'});
 end

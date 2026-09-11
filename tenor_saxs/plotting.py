@@ -54,6 +54,7 @@ from scipy import stats as _stats
 __all__ = [
     "plot_v_discrepancy_violin",
     "plot_rg_discrepancy_violin",
+    "plot_r0_discrepancy_violin",
     "plot_tenor_benchmark_violins",
 ]
 
@@ -269,6 +270,33 @@ def _rg_relative_discrepancy(sub: pd.DataFrame) -> np.ndarray:
         return (rg - true_rg) / true_rg
 
 
+def _r0_relative_discrepancy(sub: pd.DataFrame) -> np.ndarray:
+    """``(RgCorrected - True_R0) / True_R0``.
+
+    Unlike :func:`_rg_relative_discrepancy` (the apparent, Guinier-biased
+    radius against its own fixed-by-construction target), this compares the
+    polydispersity-CORRECTED radius against the true scattering-weighted
+    mean -- the manuscript's current Fig. 5, replacing the earlier
+    apparent-radius panel (which has no physical interest: the apparent
+    radius is fixed by construction, so its own discrepancy is a
+    tautology). Requires a results table produced after ``True_R0`` was
+    added to :func:`tenor_saxs.benchmark.run_noise_benchmark` -- raises a
+    descriptive ``KeyError`` on an older table rather than silently doing
+    the wrong comparison.
+    """
+    missing = [c for c in ("RgCorrected", "True_R0") if c not in sub.columns]
+    if missing:
+        raise KeyError(
+            f"results table is missing {missing!r} -- regenerate it with the "
+            "current tenor_saxs.benchmark.run_noise_benchmark (True_R0 was "
+            "added alongside RgCorrected; an older results table predates it)"
+        )
+    rg_corrected = sub["RgCorrected"].to_numpy(dtype=float)
+    true_r0 = sub["True_R0"].to_numpy(dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return (rg_corrected - true_r0) / true_r0
+
+
 def plot_v_discrepancy_violin(
     results_df: pd.DataFrame, ax: matplotlib.axes.Axes | None = None, rng: np.random.Generator | None = None
 ) -> matplotlib.axes.Axes:
@@ -306,30 +334,68 @@ def plot_rg_discrepancy_violin(
     return ax
 
 
-def plot_tenor_benchmark_violins(
-    results_df: pd.DataFrame, rng: np.random.Generator | None = None
-) -> tuple[matplotlib.figure.Figure, Sequence[matplotlib.axes.Axes]]:
-    """Three-panel figure: ``V`` discrepancy, ``p`` discrepancy (identical data), ``Rg`` relative discrepancy.
+def plot_r0_discrepancy_violin(
+    results_df: pd.DataFrame, ax: matplotlib.axes.Axes | None = None, rng: np.random.Generator | None = None
+) -> matplotlib.axes.Axes:
+    """Per-noise-level violin of the corrected-radius discrepancy ``(RgCorrected - True_R0)/True_R0``.
 
-    Port of ``plot_tenor_violin_1dGT``'s top-level three-figure layout
-    (V/p/Rg), combined into one ``matplotlib.pyplot.subplots`` figure rather
-    than three separate MATLAB figure windows. Returns ``(fig, axes)``
-    without calling ``plt.show()``.
+    The manuscript's current Fig. 5 -- see :func:`_r0_relative_discrepancy`.
     """
+    results_df = _filter_noiseless(results_df)
+    if ax is None:
+        _, ax = plt.subplots(figsize=(6, 4.5))
+    if rng is None:
+        rng = np.random.default_rng()
+    ax = _draw_violin_panel(ax, results_df, _r0_relative_discrepancy, r"$\Delta R_0 / R_{0,\mathrm{true}}$", rng)
+    ax.axhline(0.0, color="k", linestyle="--", linewidth=1.2)
+    return ax
+
+
+_PANEL_SPECS: dict[str, tuple] = {
+    "V": (_v_discrepancy, r"$\sqrt{V}$ discrepancy", "V discrepancy", False),
+    "p": (_v_discrepancy, r"$p$ discrepancy", "p discrepancy (identical to V)", False),
+    "Rg": (_rg_relative_discrepancy, r"$\Delta R_g / R_{g,\mathrm{true}}$", "Rg relative discrepancy", True),
+    "R0": (_r0_relative_discrepancy, r"$\Delta R_0 / R_{0,\mathrm{true}}$", "R0 relative discrepancy (corrected)", True),
+}
+
+
+def plot_tenor_benchmark_violins(
+    results_df: pd.DataFrame,
+    rng: np.random.Generator | None = None,
+    panels: Sequence[str] = ("V", "p", "Rg"),
+) -> tuple[matplotlib.figure.Figure, Sequence[matplotlib.axes.Axes]]:
+    """Multi-panel figure of the requested discrepancy panels.
+
+    Port of ``plot_tenor_violin_1dGT``'s top-level multi-figure layout,
+    combined into one ``matplotlib.pyplot.subplots`` figure rather than
+    separate MATLAB figure windows. Returns ``(fig, axes)`` without calling
+    ``plt.show()``.
+
+    ``panels`` selects which of ``"V"`` (sqrt(V) discrepancy), ``"p"``
+    (identical data, kept for MATLAB-figure parity), ``"Rg"`` (apparent-
+    radius relative discrepancy) and ``"R0"`` (corrected-radius relative
+    discrepancy, the manuscript's current Fig. 5 -- see
+    :func:`plot_r0_discrepancy_violin`) to draw, and in what order. Default
+    is unchanged from before this parameter existed (``("V", "p", "Rg")``);
+    the manuscript's current pair is ``panels=("V", "R0")``. Raises
+    ``ValueError`` on an unknown panel name.
+    """
+    unknown = [p for p in panels if p not in _PANEL_SPECS]
+    if unknown:
+        raise ValueError(f"unknown panel name(s) {unknown!r}; choose from {sorted(_PANEL_SPECS)}")
+
     results_df = _filter_noiseless(results_df)
     if rng is None:
         rng = np.random.default_rng()
 
-    fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
-    _draw_violin_panel(axes[0], results_df, _v_discrepancy, r"$\sqrt{V}$ discrepancy", rng)
-    axes[0].set_title("V discrepancy")
-
-    _draw_violin_panel(axes[1], results_df, _v_discrepancy, r"$p$ discrepancy", rng)
-    axes[1].set_title("p discrepancy (identical to V)")
-
-    _draw_violin_panel(axes[2], results_df, _rg_relative_discrepancy, r"$\Delta R_g / R_{g,\mathrm{true}}$", rng)
-    axes[2].axhline(0.0, color="k", linestyle="--", linewidth=1.2)
-    axes[2].set_title("Rg relative discrepancy")
+    fig, axes = plt.subplots(1, len(panels), figsize=(16 * len(panels) / 3, 4.5), squeeze=False)
+    axes = axes[0]
+    for ax, name in zip(axes, panels):
+        value_fn, ylabel, title, zero_line = _PANEL_SPECS[name]
+        _draw_violin_panel(ax, results_df, value_fn, ylabel, rng)
+        if zero_line:
+            ax.axhline(0.0, color="k", linestyle="--", linewidth=1.2)
+        ax.set_title(title)
 
     fig.tight_layout()
     return fig, axes

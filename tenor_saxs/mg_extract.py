@@ -48,6 +48,22 @@ from . import psf
 # source. protocol.py should import this rather than re-declaring it.
 Z95 = 1.95996398454005
 
+# --- Analysis-window tuning parameters (see the module docstring) ---------
+# The Guinier fit window is the intersection of two conditions
+# (MG_extract.m:186-194):
+#   (i)  an upper Guinier edge   q < QRG_MAX / sqrt(rg2)   -- i.e. q*Rg_app < QRG_MAX
+#   (ii) a detector-border margin excluding pixels within
+#        DEADPIX_FACTOR * max(pxn) pixels of the outer edge.
+#
+# Round-4 update: the manuscript's final choice, after the round-3/4 window
+# sweeps, is q*R0_tilde < 1.0 and a one-kernel-width border margin -- a
+# bias-variance compromise (a small, well-characterized, monotone-in-V
+# underestimate of V in exchange for a >3x reduction in the photon density
+# needed for RMS(V^0.5) < 0.1), not a validity threshold. Round 1-3 shipped
+# QRG_MAX=0.79, DEADPIX_FACTOR=2.0.
+QRG_MAX = 1.0
+DEADPIX_FACTOR = 1.0
+
 
 @dataclass(slots=True)
 class WlsFitResult:
@@ -315,6 +331,8 @@ def mg_extract(
     weight_mode: str = "intensity",
     wavelength: float = 0.1,
     use_single: bool = False,
+    qrg_max: float = QRG_MAX,
+    deadpix_factor: float = DEADPIX_FACTOR,
 ) -> MgExtractResult:
     """Fit the log-ratio of a wide/narrow-smeared image pair to extract MG coefficients.
 
@@ -369,6 +387,13 @@ def mg_extract(
         docstring. ``False`` (this port's default) keeps the convolution in
         float64; ``True`` replicates MATLAB's internal ``single`` cast for
         MATLAB-parity comparisons.
+    qrg_max:
+        Upper Guinier edge, as ``q * sqrt(rg2) < qrg_max``. Together with
+        ``deadpix_factor`` this sets the analysis window -- see the
+        ``QRG_MAX``/``DEADPIX_FACTOR`` module constants above.
+    deadpix_factor:
+        Detector-border margin, in units of ``max(pxn)`` pixels, excluded
+        from the fit on each side.
 
     Returns
     -------
@@ -417,9 +442,13 @@ def mg_extract(
         log_ratio = np.log(f_wide / f_narrow)
 
     # -------- Guinier-region mask (MG_extract.m:183-201) -------------------
-    deadpix = 2 * int(np.max(pxn))
+    if not np.isfinite(deadpix_factor) or deadpix_factor < 0:
+        raise ValueError(f"deadpix_factor must be finite and >= 0, got {deadpix_factor!r}")
+    if not np.isfinite(qrg_max) or qrg_max <= 0:
+        raise ValueError(f"qrg_max must be finite and > 0, got {qrg_max!r}")
+    deadpix = float(deadpix_factor) * float(np.max(pxn))
     max_q = float(np.max(qvr))
-    q_upper = min(max_q - deadpix * dqpix, 0.79 / np.sqrt(rg2))
+    q_upper = min(max_q - deadpix * dqpix, float(qrg_max) / np.sqrt(rg2))
     if q_upper <= 0:
         raise ValueError(
             "not enough pixels - consider using a smaller slit "

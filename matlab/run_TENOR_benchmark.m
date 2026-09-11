@@ -35,10 +35,18 @@ cfg.overwrite=p.Results.overwrite;
 cfg.seed=p.Results.seed;
 cfg.nReplicates=p.Results.nReplicates;
 cfg.instrument=struct('SD_dist',360,'lambda',0.1,'det_side',3.5,'DETpix',500,'PSF0',bartlett_local(3,15));
-cfg.ensemble=struct('rg',3,'V',(0.01:.05:.55).^2,'phi2',+1/18,'distribution','normal','dist_param',struct('N',25),'weightPower',0);
+% [uri2x-15]: 12-value V grid, linspace(.01,.55,12).^2 (was (0.01:.05:.55).^2, 11 values).
+cfg.ensemble=struct('rg',3,'V',linspace(.01,.55,12).^2,'phi2',+1/18,'distribution','normal','dist_param',struct('N',25),'weightPower',0);
 cfg.ensemble.targetOptions=struct('pMinimum',1e-5,'pMaximum',5,'varianceTolerance',2e-4,'maximumIterations',50,'generatorCoverage',.995,'applyWeightAgain',true,'expansionFactor',1.6);
-cfg.noise=struct('peakPhotons',10.^(2.5:.5:5)/1.65,'clipNegative',true);
-cfg.tenor=struct('Pxn',[85 75 111 125],'signum',4,'use_r3',false,'use_g3',false,'VRange',[-.05 .35],'VGridN',4001,'strategy','inverseVariance','observables',{{'Yg100'}});
+% [uri2x-15]: seven half-decade photon Q-densities N_q2=1e6..1e9 photons/nm^-2
+% (instrument-geometry-only -- see plot_tenor_violin_1dGT.m's dq formula),
+% converted to peakPhotons = N_q2 * dq^2 at this benchmark's own geometry.
+% (Was 6 levels via 10.^(2.5:.5:5)/1.65, i.e. N_q2 = 3.2e7..1.0e10.)
+dq=4*pi/cfg.instrument.lambda*cfg.instrument.det_side/cfg.instrument.SD_dist/(2*round(cfg.instrument.DETpix/2)+1);
+cfg.noise=struct('peakPhotons',10.^(6:0.5:9)*dq^2,'clipNegative',true);
+% [uri2x-15]'s chosen quartet, [91 81 117 127] (was [85 75 111 125]); window
+% now q*R0_tilde<1.0, margin 1x (was 0.79/2).
+cfg.tenor=struct('Pxn',[91 81 117 127],'signum',4,'use_r3',false,'use_g3',false,'VRange',[-.05 .35],'VGridN',4001,'strategy','inverseVariance','QRG_MAX',1.0,'DEADPIX_FACTOR',1,'observables',{{'Yg100'}});
 [V,P]=ndgrid(cfg.ensemble.V(:),cfg.ensemble.phi2(:));
 cfg.caseTable=table((1:numel(V))',V(:),P(:),sqrt(V(:)),'VariableNames',{'CaseID','True_V','Phi2','True_p'});
 end
