@@ -4,7 +4,7 @@ weighted vs. unweighted variance.
 Paper caption: "The sensitivity to distribution type, in weighted and
 unweighted cases. Top left: Dependence of the Y_G observable on the
 polydispersity for different ensemble distribution functions (solid
-sphere's form-factor, R0=3nm). The horizontal span of the curves' braid
+sphere's form-factor, R0=5nm). The horizontal span of the curves' braid
 indicates the uncertainty of variance extraction on the distribution
 function ... Right panels present the same data scaled by the scattering
 strength weighted normalized variance, V."
@@ -38,7 +38,7 @@ DET_SIDE = 3.5
 DET_PIX = 500
 PSF0 = psf.bartlett2d(3, 15)
 PXN = np.array([87, 85, 125, 123])
-R0 = 3.0
+R0 = 5.0  # matches the manuscript's stated baseline and every other reproduce_fig*.py script
 N_RADII = 11
 PHI2 = formfactors.GUINIER_TABLE["solid_sphere"].phi2
 WEIGHT_POWER = formfactors.GUINIER_TABLE["solid_sphere"].weight_power

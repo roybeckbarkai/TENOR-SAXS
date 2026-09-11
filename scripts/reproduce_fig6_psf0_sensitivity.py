@@ -78,6 +78,10 @@ def main(out_dir: Path) -> None:
                 r = protocol.tenor_protocol(
                     result.intensity, result.qx, result.qy, phi2, pxn=PXN,
                     wavelength=WAVELENGTH, observables=("Yg100",),
+                    # Matches the manuscript's stated cubic (3rd-order) G/M fit for
+                    # these Appendix sensitivity figures (main-text/noise-benchmark
+                    # results stay quadratic, the tenor_protocol default).
+                    use_r3=True, use_g3=True,
                 )
                 yg100.append(r.observed["Yg100"])
             ax.plot(footprints, yg100, "-o", ms=4, label=name)

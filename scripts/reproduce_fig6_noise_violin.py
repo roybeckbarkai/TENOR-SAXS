@@ -7,8 +7,9 @@ R0=3nm and relative standard deviations in the range of 0-0.55."
 
 This runs the full noise benchmark (BenchmarkConfig's defaults already
 match this setup: rg=3.0, phi2=1/18 (Gaussian chain), distribution='normal',
-v_values=(0.01:0.05:0.55)**2, peak_photons=10**(2.5:0.5:5)/1.65) via
-tenor_saxs.benchmark, and plots the resulting violin panels.
+v_values=linspace(0.01,0.55,12)**2, 7 half-decade photon densities
+1e6-1e9 photons/nm^2) via tenor_saxs.benchmark, and plots the resulting
+(V, R0) violin panels -- the manuscript's current benchmark figure.
 
 Usage:
     .venv/bin/python3 scripts/reproduce_fig6_noise_violin.py [--n-replicates N] [--out-dir DIR]
@@ -47,7 +48,10 @@ def main(n_replicates: int, out_dir: Path) -> None:
     print(f"overall valid fraction: {valid_frac:.3f}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    fig, axes = plotting.plot_tenor_benchmark_violins(results_df)
+    # The manuscript's current benchmark figure is the (V, R0) pair -- the
+    # apparent-radius panel was dropped (it has no physical interest: fixed
+    # by construction, so its own discrepancy is a tautology).
+    fig, axes = plotting.plot_tenor_benchmark_violins(results_df, panels=("V", "R0"))
     fig.suptitle(f"Reproduction of paper Fig. 6: Gaussian chain, R0=3nm, normal, n_replicates={n_replicates}")
     out_path = out_dir / "fig6_noise_violin_reproduction.png"
     fig.savefig(out_path, dpi=150)

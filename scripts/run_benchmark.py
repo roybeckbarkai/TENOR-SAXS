@@ -44,7 +44,7 @@ def _build_config(args: argparse.Namespace) -> benchmark.BenchmarkConfig:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-root", type=Path, default=_DEFAULT_OUTPUT_ROOT, help="Directory for the clean-database cache, results CSV/PKL, and violin PNG.")
-    parser.add_argument("--n-cases", type=int, default=None, help="Only run the first N of the 11 target V values (smoke-test convenience). Default: all 11.")
+    parser.add_argument("--n-cases", type=int, default=None, help="Only run the first N of the 12 target V values (smoke-test convenience). Default: all 12.")
     parser.add_argument("--n-replicates", type=int, default=30, help="Number of noise replicates per (case, photon-flux level).")
     parser.add_argument("--seed", type=int, default=314159, help="Base seed for the deterministic per-replicate seed derivation.")
     parser.add_argument("--overwrite-clean", action="store_true", help="Force regeneration of the clean (noise-free) database cache even if a matching one exists.")
@@ -57,7 +57,11 @@ def main(argv: list[str] | None = None) -> None:
 
     n_ok_cases = int((manifest["Status"] == "ok").sum())
     n_rows = len(results_df)
-    valid_mask = results_df["Status"] == "ok"
+    # np.isfinite(BestV), NOT Status=="ok" -- the latter only means
+    # tenor_protocol didn't raise, a much weaker condition: the observable
+    # can still come back unusable (e.g. every branch "outside calibration
+    # range") without raising anything, especially at low photon counts.
+    valid_mask = np.isfinite(results_df["BestV"])
     valid_fraction = float(valid_mask.mean()) if n_rows else float("nan")
 
     abs_err = (results_df.loc[valid_mask, "BestV"] - results_df.loc[valid_mask, "True_V"]).abs()
@@ -67,11 +71,15 @@ def main(argv: list[str] | None = None) -> None:
     print("--- Summary ---")
     print(f"Clean cases ok: {n_ok_cases}/{len(manifest)}")
     print(f"Result rows: {n_rows}")
-    print(f"Overall valid fraction (Status=='ok'): {valid_fraction:.3f}")
+    print(f"Overall valid fraction (finite BestV): {valid_fraction:.3f}")
     print(f"Mean |BestV - True_V| (valid rows): {mean_abs_err:.4g}")
     print(f"Median |BestV - True_V| (valid rows): {median_abs_err:.4g}")
 
-    fig, _axes = plotting.plot_tenor_benchmark_violins(results_df)
+    # The manuscript's current benchmark figure is the (V, R0) pair -- the
+    # apparent-radius panel was dropped (it has no physical interest: the
+    # apparent radius is fixed by construction, so its own discrepancy is a
+    # tautology -- see plotting.plot_r0_discrepancy_violin).
+    fig, _axes = plotting.plot_tenor_benchmark_violins(results_df, panels=("V", "R0"))
     png_path = Path(config.output_root) / "benchmark_violin.png"
     fig.savefig(png_path, dpi=150)
     print(f"Saved violin plot: {png_path}")
